@@ -1,0 +1,37 @@
+scenario:
+  name: two_obstacle
+  num_episodes: 1001
+  baseline_frequency: 50
+  max_time: 150
+  time_step: 0.25
+  domain: 150
+learning_agent:
+  type: DQN
+  gamma: 0.9
+  drop_out: 0.0
+  nodes_in_layer: 100
+  optimizer: adam
+  learn_rate: 0.001
+  beta_1: 0.9
+  beta_2: 0.999
+  #optimizer: rms_prop
+  #learn_rate: 0.001
+  #alpha: 0.99
+  #momentum: 0
+  memory_capacity: 100000
+  epsilon_start: 0.9
+  epsilon_end: 0.1
+  epsilon_decay: 400
+  update_target: 10
+  n_batches: 100
+  batch_size: 2048
+  loss: huber
+boat:
+  type: utility
+  sensor: lidar
+  mode: propeller_only
+reward:
+  crash: -100.0
+  success: 100.0
+  distance_norm: 1.5
+  prox_crash: -1.0
