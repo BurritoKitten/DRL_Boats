@@ -182,6 +182,11 @@ class ReplayStorage:
         self.reset_interim_buffer()
 
     def reset_interim_buffer(self):
+        """
+        set the buffer that is used to store the data during an episode to empty to be prepared for the next episode
+
+        :return:
+        """
 
         # create a new buffer to 'reset' the buffer
         self.interim_buffer = ReplayMemory(self.capacity,self.transition,'interim')
@@ -199,13 +204,80 @@ class ReplayStorage:
         """
         strategy = self.h_params['replay_data']['replay_strategy']
         if strategy == 'all_in_one':
+
+            if len(self.buffers['only'].memory) < batch_size:
+                # not enough data to fill up one batch
+                return None
+
             return random.sample(self.buffers['only'].memory, batch_size)
         elif strategy == 'proximity':
 
+            if len(self.buffers['close'].memory) + len(self.buffers['far'].memory) < batch_size:
+                # there is not enough data in both buffers to complete one batch
+                return None
+
             n_close = int(np.floor(self.h_params['replay_data']['close_fraction']*float(batch_size)))
             n_far = batch_size - n_close
-            close = random.sample(self.buffers['close'].memory, n_close)
-            far = random.sample(self.buffers['far'].memory, n_far)
+
+            enough_close = False
+            if n_close <= len(self.buffers['close'].memory):
+                enough_close = True
+            enough_far = False
+            if n_far <= len(self.buffers['far'].memory):
+                enough_far = True
+
+            if enough_close and enough_far:
+
+                close = random.sample(self.buffers['close'].memory, n_close)
+                far = random.sample(self.buffers['far'].memory, n_far)
+            else:
+                # one of the buffers does not have enough data so some needs to be borrowed from the other buffer to
+                # fill out the buffer
+                # sort the buffers in descending error
+                buffer_lens = [['far', len(self.buffers['far'].memory), n_far],
+                               ['close', len(self.buffers['close'].memory), n_close]]
+
+                # bubble sort
+                n = len(buffer_lens)
+                for i in range(n):
+                    for j in range(0, n - i - 1):
+
+                        # traverse the array from 0 to n-i-1
+                        # Swap if the element found is greater
+                        # than the next element
+                        if buffer_lens[j][1] < buffer_lens[j + 1][1]:
+                            buffer_lens[j], buffer_lens[j + 1] = buffer_lens[j + 1], buffer_lens[j]
+
+                # determine how many extra data points are needed.
+                extra_needed = 0
+                while len(buffer_lens) > 0:
+
+                    tmp_buffer_info = buffer_lens.pop()
+
+                    if len(buffer_lens) == 0:
+                        adj = extra_needed
+                    else:
+                        adj = int(np.floor(extra_needed / len(buffer_lens)))
+
+                    tmp_additional_data = (tmp_buffer_info[2] + adj) - len(self.buffers[tmp_buffer_info[0]].memory)
+                    if tmp_additional_data > 0:
+                        # there is not enough data in this buffer to meet the requested amount, so log that more
+                        # data is needed from the remaining buffers
+                        extra_needed = tmp_additional_data
+
+                        if tmp_buffer_info[0] == 'far':
+                            far = random.sample(self.buffers[tmp_buffer_info[0]].memory,
+                                                    len(self.buffers[tmp_buffer_info[0]]))
+                        elif tmp_buffer_info[0] == 'close':
+                            close = random.sample(self.buffers[tmp_buffer_info[0]].memory,
+                                                  len(self.buffers[tmp_buffer_info[0]]))
+                    else:
+                        if tmp_buffer_info[0] == 'far':
+                            far = random.sample(self.buffers[tmp_buffer_info[0]].memory,
+                                                    tmp_buffer_info[2] + extra_needed)
+                        elif tmp_buffer_info[0] == 'close':
+                            close = random.sample(self.buffers[tmp_buffer_info[0]].memory,
+                                                  tmp_buffer_info[2] + extra_needed)
 
             batch = close + far
             return batch

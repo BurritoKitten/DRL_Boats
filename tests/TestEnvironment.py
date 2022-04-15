@@ -183,7 +183,7 @@ class TestEnvironment(TestCase):
         """
 
         # test initialization of a replay storage when only using one replay buffer
-        file_name = 'storage_test_params_all_in_one.yaml'
+        file_name = 'storage_test_params_all_in_one.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
 
         rs = Learn_Algorithms.ReplayStorage(h_params)
@@ -204,7 +204,7 @@ class TestEnvironment(TestCase):
 
         # test initialization of a replay storage with two replay buffers. one for being close to an obstacle and one
         # being far from the obstacle
-        file_name = 'storage_test_params_proximity.yaml'
+        file_name = 'storage_test_params_proximity.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
 
         rs = Learn_Algorithms.ReplayStorage(h_params)
@@ -227,7 +227,7 @@ class TestEnvironment(TestCase):
 
         # test initialization of a replay storage with three replay buffers. one for each potential outcome of the
         # simulation
-        file_name = 'storage_test_params_outcome.yaml'
+        file_name = 'storage_test_params_outcome.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
 
         rs = Learn_Algorithms.ReplayStorage(h_params)
@@ -254,7 +254,7 @@ class TestEnvironment(TestCase):
 
 
         # test initialization of a replay storage when only using one replay buffer
-        file_name = 'storage_test_params_all_in_one.yaml'
+        file_name = 'storage_test_params_all_in_one.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
         rs = Learn_Algorithms.ReplayStorage(h_params)
 
@@ -283,7 +283,7 @@ class TestEnvironment(TestCase):
 
         # --------------------------------------------------------------------------------------------------------------
         # test initialization of a replay storage when sorting between close and far from an obstacle
-        file_name = 'storage_test_params_proximity.yaml'
+        file_name = 'storage_test_params_proximity.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
         rs = Learn_Algorithms.ReplayStorage(h_params)
 
@@ -313,7 +313,7 @@ class TestEnvironment(TestCase):
 
         # --------------------------------------------------------------------------------------------------------------
         # test initialization of a replay storage when sorting between the outcome of the simulation
-        file_name = 'storage_test_params_outcome.yaml'
+        file_name = 'storage_test_params_outcome.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
         rs = Learn_Algorithms.ReplayStorage(h_params)
 
@@ -343,7 +343,7 @@ class TestEnvironment(TestCase):
         self.assertEqual(rs.position['crash'], 0)
         self.assertEqual(rs.position['other'], 0)
 
-        file_name = 'storage_test_params_outcome.yaml'
+        file_name = 'storage_test_params_outcome.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
         rs = Learn_Algorithms.ReplayStorage(h_params)
 
@@ -373,7 +373,7 @@ class TestEnvironment(TestCase):
         self.assertEqual(rs.position['crash'], 10)
         self.assertEqual(rs.position['other'], 0)
 
-        file_name = 'storage_test_params_outcome.yaml'
+        file_name = 'storage_test_params_outcome.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
         rs = Learn_Algorithms.ReplayStorage(h_params)
 
@@ -406,7 +406,7 @@ class TestEnvironment(TestCase):
     def test_replay_storage_sample(self):
 
         # test initialization of a replay storage when only using one replay buffer
-        file_name = 'storage_test_params_all_in_one.yaml'
+        file_name = 'storage_test_params_all_in_one.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
         rs = Learn_Algorithms.ReplayStorage(h_params)
 
@@ -427,7 +427,7 @@ class TestEnvironment(TestCase):
         self.assertEqual(len(batch),10)
 
         # test initialization of a replay storage when two buffers are used based on the proximity
-        file_name = 'storage_test_params_proximity.yaml'
+        file_name = 'storage_test_params_proximity.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
         rs = Learn_Algorithms.ReplayStorage(h_params)
 
@@ -435,10 +435,10 @@ class TestEnvironment(TestCase):
         k = 0
         while k < 10:
 
-            if k >= 7:
-                rs.push(torch.tensor(0), torch.tensor(1), torch.tensor(2), torch.tensor(3), True, 8.0)
+            if k >= 8:
+                rs.push(torch.tensor(0), torch.tensor(1), torch.tensor(2), torch.tensor(3), torch.tensor(True), 8.0)
             else:
-                rs.push(torch.tensor(0), torch.tensor(1), torch.tensor(2), torch.tensor(3), False, 20.0)
+                rs.push(torch.tensor(0), torch.tensor(1), torch.tensor(2), torch.tensor(3), torch.tensor(False), 20.0)
 
             k += 1
 
@@ -446,10 +446,37 @@ class TestEnvironment(TestCase):
         batch = rs.sample(10)
 
         self.assertEqual(len(batch), 10)
+        n_far = 0
+        n_close = 0
+        for tmp_sample in batch:
+            prox = tmp_sample.prox
+            if prox > 10.0:
+                n_far += 1
+            elif prox < 10.0:
+                n_close += 1
+        self.assertEqual(n_close,2)
+        self.assertEqual(n_far, 8)
+
+        # add more data to the close proximity
+        rs.push(torch.tensor(0), torch.tensor(1), torch.tensor(2), torch.tensor(3), torch.tensor(True), 8.0)
+        rs.push(torch.tensor(0), torch.tensor(1), torch.tensor(2), torch.tensor(3), torch.tensor(True), 8.0)
+        rs.sort_data_into_buffers()
+        batch = rs.sample(10)
+        self.assertEqual(len(batch), 10)
+        n_far = 0
+        n_close = 0
+        for tmp_sample in batch:
+            prox = tmp_sample.prox
+            if prox > 10.0:
+                n_far += 1
+            elif prox < 10.0:
+                n_close += 1
+        self.assertEqual(n_close, 3)
+        self.assertEqual(n_far, 7)
 
         # --------------------------------------------------------------------------------------------------------------
         # test initialization of a replay storage when sorting between the outcome of the simulation
-        file_name = 'storage_test_params_outcome.yaml'
+        file_name = 'storage_test_params_outcome.yml'
         h_params = Environment.Environment.load_hyper_params(file_name)
         rs = Learn_Algorithms.ReplayStorage(h_params)
 
