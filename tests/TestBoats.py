@@ -77,7 +77,6 @@ class TestBoat(TestCase):
 
         # run the calculations to get distance so the boat
 
-
     def test_gps(self):
 
         # x, y, radius
@@ -253,8 +252,6 @@ class TestBoat(TestCase):
         plt.tight_layout()
         plt.show()
 
-
-
     def test_gpu_load(self):
         import torch
         print('available:\t',torch.cuda.is_available(),torch.__version__)
@@ -385,3 +382,32 @@ class TestBoat(TestCase):
 
         plt.show()
 
+    def test_sailboat_turn(self):
+
+        delta_t = 0.25
+        sb = Movers.SailBoat.challenger('challenged',delta_t=delta_t)
+        sb.gamma = np.deg2rad(90.0)
+        sb.v_wind = 10.0
+
+        t = 0
+        max_t = 50
+        x = []
+        y = []
+        while t < max_t:
+
+            x.append(sb.x)
+            y.append(sb.y)
+
+            if t > 20.0 and t < 30.0:
+                sb.set_control(sb.beta,np.deg2rad(5.0))
+            else:
+                sb.set_control(sb.beta, sb.delta)
+
+            sb.step()
+
+            t += delta_t
+
+        fig = plt.figure()
+        plt.plot(x,y)
+        plt.grid()
+        plt.show()

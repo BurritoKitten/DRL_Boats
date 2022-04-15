@@ -400,7 +400,6 @@ class UtilityBoat(Mover, ABC):
         elif self.delta > np.pi/2.0:
             self.delta = np.pi/2.0
 
-
     def set_moi(self):
         """
         approximates the moment of intertia for the boat as the MOI for a cylinder.
@@ -494,9 +493,9 @@ class UtilityBoat(Mover, ABC):
         power = 20000  # [watt]
         prop_diam = 0.25  # [m]
         fuel_capacity = 2  # [kg]
-        fuel = 1.5  # [kg]
-        bsfc = 5.0e-8  # [kg/w-s] this is the realistic value
-        #bsfc = 5.0e-7  # [kg/w-s] this is the inefficient value for use
+        fuel = 2.0  # [kg]
+        #bsfc = 5.0e-8  # [kg/w-s] this is the realistic value
+        bsfc = 5.0e-7  # [kg/w-s] this is the inefficient value for use
         ub = UtilityBoat(name,delta, delta_t, fom, hull_area, hull_len, mass, phi, power, prop_diam, fuel_capacity, fuel,
                          bsfc, mode)
 
@@ -533,36 +532,48 @@ class UtilityBoat(Mover, ABC):
 
         elif self.mode == 'propeller_and_power':
             # the boat controls both the propller angle and the power
-            prop_action = int(np.floor(action / 5))
-            power_action = int(action % 5)
+            prop_action = int(np.floor(action / 7))
+            power_action = int(action % 7)
 
             power_adj = 0
             if power_action == 0:
+                # decrease power by 1500 watts
+                power_adj = -1500
+            elif power_action == 1:
                 # decrease power by 500 watts
                 power_adj = -500
-            elif power_action == 1:
+            elif power_action == 2:
                 # decrease power by 100 watts
                 power_adj = -100
-            elif power_action == 3:
+            elif power_action == 4:
                 # increase power by 100 watts
                 power_adj = 100
-            elif power_action == 4:
+            elif power_action == 5:
                 # increase power by 500 watts
                 power_adj = 500
+            elif power_action == 6:
+                # increase power by 1500 watts
+                power_adj = 1500
 
             delta_adj = 0
             if prop_action == 0:
-                # move propeller clockwise by 5 degres
-                delta_adj = np.deg2rad(-5)
+                # move propeller clockwise by 15 degrees
+                delta_adj = np.deg2rad(-15)
             elif prop_action == 1:
-                # move propeller clockwise by 1 degres
+                # move propeller clockwise by 5 degrees
+                delta_adj = np.deg2rad(-5)
+            elif prop_action == 2:
+                # move propeller clockwise by 1 degrees
                 delta_adj = np.deg2rad(-1)
-            elif prop_action == 3:
-                # move propeller ccw by 1 degres
-                delta_adj = np.deg2rad(1)
             elif prop_action == 4:
-                # move propeller ccw by 5 degres
+                # move propeller ccw by 1 degrees
+                delta_adj = np.deg2rad(1)
+            elif prop_action == 5:
+                # move propeller ccw by 5 degrees
                 delta_adj = np.deg2rad(5)
+            elif prop_action == 6:
+                # move propeller ccw by 15 degrees
+                delta_adj = np.deg2rad(15)
 
         else:
             raise ValueError('Utility boat {} has not been given a valid control mode'.format(self.name))
@@ -648,6 +659,12 @@ class UtilityBoat(Mover, ABC):
             self.state_full['v_boat_theta'] = self.v_boat_theta
             self.state_full['v_boat_x_p'] = self.v_boat_x_p
 
+            if include_sensors:
+                # get the sensors information and add it to the state
+                for sensor in self.sensors:
+                    tmp_state = sensor.get_state()
+                    self.state_prop = {**self.state_prop, **tmp_state}
+
             return self.state_full
 
     def get_action_size(self, action_type):
@@ -672,7 +689,7 @@ class UtilityBoat(Mover, ABC):
             # control power and propeller
 
             if action_type == 'discrete':
-                size = 25
+                size = 49
             elif action_type == 'continous':
                 size = 2
             else:
@@ -728,11 +745,15 @@ class UtilityBoat(Mover, ABC):
         self.history.drop(range(step_num, len(self.history)), inplace=True)
 
 
-class SailBoat:
+class SailBoat(Mover, ABC):
 
-    def __init__(self, delta_t, mass, area_sail, area_hull, len_hull, area_rudder):
+    def __init__(self, name, delta_t, mass, area_sail, area_hull, len_hull, area_rudder):
+
+        super().__init__(name)
+
         dir_path = os.path.dirname(os.path.realpath(__file__))
         self._naca0012 = pd.read_csv(dir_path + '\\Naca0012.csv')
+
         self.delta_t = delta_t  # time step. 0.5 [s] reccomended
         self.mass = mass
         self.area_sail = area_sail
@@ -751,6 +772,9 @@ class SailBoat:
         self.alpha_prime = 0  # relative angle of attack of the sail/wing
         self.a_x = 0  # acceleration in global x direction
         self.a_y = 0  # acceleration in global y direction
+        self.a_theta = 0  # acceleration of the boat in the theta direction
+        self.a_x_p = 0  # acceleration of the boat in the boats x direction (longitudinal direction)
+        self.a_y_p = 0  # acceleration of the boat in the boats y direction (lateral direction)
         self.v_boat_x = 0  # velocity in the global x direction
         self.v_boat_y = 0  # velocity in the global y direction
         self.v_boat_x_p = 0  # velocity in the local x direction
@@ -783,6 +807,11 @@ class SailBoat:
         self.mu = 0  # heading angle difference between boat heading and vector to the destination
         self.destination = [0, 0]
         self.destination_distance = 0
+
+        self.state = OrderedDict(
+            [('beta', None), ('delta', None), ('destination_distance', None), ('gamma', None), ('mu', None),
+             ('phi', None), ('theta', None), ('v_boat_theta', None), ('v_boat_x_p', None)])
+        self.can_learn = True
 
     def calc_dest_metrics(self):
         """
@@ -871,12 +900,12 @@ class SailBoat:
         self.v_boat_x = v_boat_x_p_new * np.cos(-self.phi) + v_boat_y_p_new * np.sin(-self.phi)
         self.v_boat_y = -v_boat_x_p_new * np.sin(-self.phi) + v_boat_y_p_new * np.cos(-self.phi)
 
-        a_x_p = (v_boat_x_p_new - self.v_boat_x_p) / self.delta_t
-        a_y_p = 0
+        self.a_x_p = (v_boat_x_p_new - self.v_boat_x_p) / self.delta_t
+        self.a_y_p = 0
 
         # convert acceleration to global reference plane
-        self.a_x = a_x_p * np.cos(-self.phi) + a_y_p * np.sin(-self.phi)
-        self.a_y = -a_x_p * np.sin(-self.phi) + a_y_p * np.cos(-self.phi)
+        self.a_x = self.a_x_p * np.cos(-self.phi) + self.a_y_p * np.sin(-self.phi)
+        self.a_y = -self.a_x_p * np.sin(-self.phi) + self.a_y_p * np.cos(-self.phi)
 
         # calculate velocity and acceleration in theta direction
         self.v_boat_theta = self.v_boat_x * np.cos(-self.theta) - self.v_boat_y * np.sin(-self.theta)
@@ -1083,17 +1112,172 @@ class SailBoat:
     def get_vel(self):
         return self.v_boat_x, self.v_boat_y
 
-    def get_state(self):
-        return self.gamma, self.beta, self.delta, self.phi
+    def get_state(self, include_sensors):
+
+        self.state['beta'] = self.beta
+        self.state['delta'] = self.delta
+        self.state['destination_distance'] = self.destination_distance
+        self.state['gamma'] = self.gamma
+        self.state['mu'] = self.mu
+        self.state['phi'] = self.phi
+        self.state['theta'] = self.theta
+        self.state['v_boat_theta'] = self.v_boat_theta
+        self.state['v_boat_x_p'] = self.v_boat_x_p
+
+        if include_sensors:
+            # get the sensors information and add it to the state
+            for sensor in self.sensors:
+                tmp_state = sensor.get_state()
+                self.state_prop = {**self.state_prop, **tmp_state}
+
+        return self.state
+
+    def get_action_size(self, action_type):
+        """
+        gets the actions space size based on the type of controller (discrete or continous)
+        :param action_type:
+        :return:
+        """
+        size = None
+        if action_type == 'discrete':
+            size = 49
+        elif action_type == 'continous':
+            size = 2
+        else:
+            raise ValueError('Only discrete and continous action spaces are allowed')
+        return size
+
+    def action_to_command(self, action):
+        """
+        convert an action integer into what commands the vehicle will take
+        :param action: integer for the action
+        :return:
+        """
+
+        # the boat controls both the propller angle and the power
+        rudder_action = int(np.floor(action / 7))
+        sail_action = int(action % 7)
+
+        sail_adj = 0
+        if sail_action == 0:
+            # move sail clockwise by 15 degrees
+            sail_adj = np.deg2rad(-15)
+        elif sail_action == 1:
+            # move sail clockwise by 5 degrees
+            sail_adj = np.deg2rad(-5)
+        elif sail_action == 2:
+            # move sail clockwise by 1 degrees
+            sail_adj = np.deg2rad(-1)
+        elif sail_action == 4:
+            # move sail ccw by 1 degrees
+            sail_adj = np.deg2rad(1)
+        elif sail_action == 5:
+            # move sail ccw by 5 degrees
+            sail_adj = np.deg2rad(5)
+        elif sail_action == 6:
+            # move sail ccw by 15 degrees
+            sail_adj = np.deg2rad(15)
+
+        delta_adj = 0
+        if rudder_action == 0:
+            # move rudder clockwise by 15 degrees
+            delta_adj = np.deg2rad(-15)
+        elif rudder_action == 1:
+            # move rudder clockwise by 5 degrees
+            delta_adj = np.deg2rad(-5)
+        elif rudder_action == 2:
+            # move rudder clockwise by 1 degrees
+            delta_adj = np.deg2rad(-1)
+        elif rudder_action == 4:
+            # move rudder ccw by 1 degrees
+            delta_adj = np.deg2rad(1)
+        elif rudder_action == 5:
+            # move rudder ccw by 5 degrees
+            delta_adj = np.deg2rad(5)
+        elif rudder_action == 6:
+            # move rudder ccw by 15 degrees
+            delta_adj = np.deg2rad(15)
+
+        return delta_adj, sail_adj  # adjustment to the rudder and sail angles respectivly
+
+    def normalize_state(self, include_sensors):
+        """
+        normalizes the current state of the boat so that all values are between 0 and 1
+        :return: a named tuple containing the normalized state
+        """
+        norm_state = self.get_state(False)
+
+        norm_state['beta'] = norm_state['beta'] / (np.pi * 2.0)
+        norm_state['delta'] = norm_state['delta'] / (np.pi * 2.0)
+        norm_state['destination_distance'] = norm_state['destination_distance'] / 300.0
+        norm_state['gamma'] = norm_state['gamma'] / (np.pi * 2.0)
+        norm_state['mu'] = (norm_state['mu'] + np.pi) / (np.pi * 2.0)
+        norm_state['phi'] = norm_state['phi'] / (np.pi / 2.0)
+        norm_state['theta'] = (norm_state['theta'] + np.pi) / (np.pi * 2.0)
+        norm_state['v_boat_theta'] = norm_state['v_boat_theta'] / 5.0
+        norm_state['v_boat_x_p'] = (norm_state['v_boat_x_p'] + 5.0) / 10.0
+
+        if include_sensors:
+            for sensor in self.sensors:
+                tmp_state = sensor.get_norm_state()
+                norm_state = {**norm_state, **tmp_state}
+
+        return norm_state
+
+    def add_step_history(self, step_num):
+        telemetry = {'acc_theta': self.a_theta, 'acc_boat_theta': self.a_boat_theta, 'acc_x': self.a_x,
+                     'acc_x_p': self.a_x_p, 'acc_y': self.a_y, 'acc_y_p': self.a_y_p,
+                     'alpha': self.alpha, 'beta': self.beta, 'delta': self.delta,
+                     'destination_x': self.destination[0], 'destination_y': self.destination[1],
+                     'destination_distance': self.destination_distance,
+                     'gamma': self.gamma, 'mu': self.mu, 'phi': self.phi,
+                     'theta': self.theta,
+                     'v_boat_mag': self.v_boat, 'v_boat_theta': self.v_boat_theta, 'v_boat_x': self.v_boat_x,
+                     'v_boat_x_p': self.v_boat_x_p, 'v_boat_y': self.v_boat_y,
+                     'x_pos': self.x, 'y_pos': self.y}
+        # get the sensors information and add it to the state
+        for sensor in self.sensors:
+            tmp_state = sensor.get_state()
+            telemetry = {**telemetry, **tmp_state}
+        self.history.iloc[step_num] = telemetry.values()
+
+    def reset_history(self,num_steps):
+        """
+        sets all of the history to zero
+        :param num_steps:
+        :return:
+        """
+        telemetry = {'acc_theta':self.a_theta,'acc_boat_theta':self.a_boat_theta,'acc_x':self.a_x,'acc_x_p':self.a_x_p,'acc_y':self.a_y,'acc_y_p':self.a_y_p,
+                     'alpha':self.alpha,'beta':self.beta,'delta':self.delta,
+                     'destination_x':self.destination[0],'destination_y':self.destination[1],'destination_distance':self.destination_distance,
+                     'gamma':self.gamma, 'mu':self.mu,'phi':self.phi,
+                     'theta':self.theta,
+                     'v_boat_mag':self.v_boat,'v_boat_theta':self.v_boat_theta,'v_boat_x':self.v_boat_x,'v_boat_x_p':self.v_boat_x_p,'v_boat_y':self.v_boat_y,
+                     'x_pos':self.x,'y_pos':self.y}
+        # get the sensors information and add it to the state
+        for sensor in self.sensors:
+            tmp_state = sensor.get_state()
+            telemetry = {**telemetry, **tmp_state}
+
+        empty_data = np.zeros((num_steps,len(telemetry.keys())))
+        self.history = pd.DataFrame(data=empty_data,columns=telemetry.keys())
+
+    def trim_history(self, step_num):
+        """
+        remove the rows of data that are not used due to early termination of the simulation
+        :param step_num:
+        :return:
+        """
+        self.history.drop(range(step_num, len(self.history)), inplace=True)
 
     @staticmethod
-    def challenger(delta_t):
+    def challenger(name, delta_t):
         """
         default conditions for a challenger sailboat
         :param delta_t:
         :return:
         """
-        sb = SailBoat(delta_t, mass=1814, area_sail=23, area_hull=4, len_hull=7, area_rudder=0.25)
+        sb = SailBoat(name, delta_t, mass=1814, area_sail=23, area_hull=4, len_hull=7, area_rudder=0.25)
         return sb
 
 

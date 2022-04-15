@@ -1,0 +1,3 @@
+replay_data:
+  capacity: 1000
+  replay_strategy: all_in_one
