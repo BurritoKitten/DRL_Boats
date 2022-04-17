@@ -1049,17 +1049,20 @@ class OneObstacles(Environment, ABC):
         self.history = pd.DataFrame()
         self.old = dict()
 
-    def launch_training(self, trial_num, input_file):
+    def launch_training(self, input_file):
         """
         launches and runs the training for the two_obstacle scenario
         :return:
         """
 
+        # load in the hyperparameters for the training
+        self.h_params = self.load_hyper_params(input_file)
+        trial_num = int(self.h_params['scenario']['trial_num'])
+
         # check the trial number is acceptable and notify user if overwriting old trials
         self.check_for_trial(trial_num)
 
-        # load in the hyperparameters for the training
-        self.h_params = self.load_hyper_params(input_file)
+        # write the hyper parameters for saving for later
         self.write_hyper_params(trial_num)
 
         # create obstacle movers
@@ -1077,7 +1080,8 @@ class OneObstacles(Environment, ABC):
             q_header = ['q_val_0']
         else:
             q_header = ['q_val_' + str(i) for i in range(action_size)]
-        a_header = ['action_'+str(i) for i in range(action_size)]
+        #a_header = ['action_'+str(i) for i in range(action_size)]
+        a_header = ['action']
         header = ['time', 'reward', 'done', 'is_crashed', 'is_reached'] + q_header + a_header
         self.header = header
 
@@ -1110,12 +1114,13 @@ class OneObstacles(Environment, ABC):
             if episode_number > 0 and episode_number % self.h_params['learning_agent']['update_target'] == 0:
                 self.learning_agent.update_target_network()
                 # save the interim network
-                torch.save(self.learning_agent.actor_policy_net.state_dict(),'Output\\Trial_' + str(trial_num) + '\\models\\actor' + str(episode_number) + '.pymdl')
-                torch.save(self.learning_agent.critic_net.state_dict(),
-                           'Output\\Trial_' + str(trial_num) + '\\models\\critic' + str(episode_number) + '.pymdl')
+                #torch.save(self.learning_agent.actor_policy_net.state_dict(),'Output\\Trial_' + str(trial_num) + '\\models\\actor' + str(episode_number) + '.pymdl')
+                #torch.save(self.learning_agent.critic_net.state_dict(),'Output\\Trial_' + str(trial_num) + '\\models\\critic' + str(episode_number) + '.pymdl')
+                torch.save(self.learning_agent.policy_network.state_dict(),
+                           'Output\\Trial_' + str(trial_num) + '\\models\\policy' + str(episode_number) + '.pymdl')
 
             #
-            print('Episode {} out of {} episodes: Reward = {:0.3f}: Crashed = {}: Success = {}: Far Length {}: Close Length {}'.format(episode_number,self.h_params['scenario']['num_episodes'],cumulative_reward.cpu().detach().numpy()[0][0],is_crashed,is_destination_reached,len(self.learning_agent.memory_far),len(self.learning_agent.memory_close)))
+            print('Episode {} out of {} episodes: Reward = {:0.3f}: Crashed = {}: Success = {}'.format(episode_number,self.h_params['scenario']['num_episodes'],cumulative_reward.cpu().detach().numpy()[0][0],is_crashed,is_destination_reached))
 
             episode_number += 1
 
@@ -1244,27 +1249,26 @@ class OneObstacles(Environment, ABC):
 
             # add to memory
             if not is_baseline and t > 0.001:
-                # if boat is close to an obstacle put it in memory_close, else in memory far
-                dist_to_1 = None
-                obs_1 = None
-                for name, mover in self.mover_dict.items():
-                    if 'boat' in name:
-                        for sensor in mover.sensors:
-                            tmp_obs = sensor.get_state()
-                            dist_to_1 = tmp_obs['dist_center_0']
-                    if 'obs_1' in name:
-                        obs_1 = mover
-                if (dist_to_1-obs_1.radius) <= 10.0:
-                    self.learning_agent.memory_close.push(state, action, new_state, reward, done)
-                else:
-                    self.learning_agent.memory_far.push(state, action, new_state, reward, done)
-                #self.learning_agent.memory.push(state, action, new_state, reward)
+
+                if self.h_params['replay_data']['replay_strategy'] == 'proximity':
+                    dist_to_1 = None
+                    obs_1 = None
+                    for name, mover in self.mover_dict.items():
+                        if 'boat' in name:
+                            for sensor in mover.sensors:
+                                tmp_obs = sensor.get_state()
+                                dist_to_1 = tmp_obs['dist_center_0']
+                        if 'obs_1' in name:
+                            obs_1 = mover
+                    prox = dist_to_1 - obs_1.radius
+                    self.learning_agent.replay_storage.push(state, action, new_state, reward, done, prox)
+
 
             # add to history of
             for name, mover in self.mover_dict.items():
                 mover.add_step_history(step_num)
 
-            # epsiode history
+            # episode history
             q_vals = np.reshape(q_vals,(len(q_vals[0]),))
             if isinstance(action,np.ndarray):
                 telemetry = np.concatenate(([t, reward.cpu().detach().numpy()[0][0], done, is_crashed, is_reached_dest],
@@ -1282,6 +1286,9 @@ class OneObstacles(Environment, ABC):
         self.history.drop(range(step_num,len(self.history)),inplace=True)
         for name, mover in self.mover_dict.items():
             mover.trim_history(step_num)
+
+        # sort and handle the data generated from episode into the approriate buffers
+        self.learning_agent.replay_storage.sort_data_into_buffers()
 
         return is_crashed, is_reached_dest, cumulative_reward
 
@@ -1810,7 +1817,7 @@ class OneObstacles(Environment, ABC):
 
         # tidy up the graph
         plt.tight_layout()
-        plt.savefig('Output\\Trial_' + str(trial_num) + '\\episodes\\graph\\' + str(episode_num) + '.png')
+        plt.savefig('Output\\Trial_' + str(self.h_params['scenario']['trial_num']) + '\\episodes\\graph\\' + str(episode_num) + '.png')
         plt.close('all')
 
     def render_training(self, trial_num):
@@ -3128,13 +3135,12 @@ class TwoObstacles(Environment, ABC):
 if __name__ == '__main__':
 
     # trial 0 is used for debugging
-    trial_num = 23 # the trial number to save the output information too
     input_file = 'scenario_params.yml'  # file that describes the parameters for the training
 
     # run a no obstalce scenario
-    no = NoObstacles()
-    no.launch_training(trial_num, input_file)
+    #no = NoObstacles()
+    #no.launch_training(input_file)
 
     # run a one obstacle scenario
-    #oo = OneObstacles()
-    #oo.launch_training(trial_num,input_file)
+    oo = OneObstacles()
+    oo.launch_training(input_file)

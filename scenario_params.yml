@@ -1,10 +1,11 @@
 scenario:
-  name: no_obstacles
-  num_episodes: 5001
-  baseline_frequency: 20
+  name: one_obstacle
+  num_episodes: 1001
+  baseline_frequency: 50
   max_time: 150
   time_step: 0.25
   domain: 100
+  trial_num: 24
 learning_agent:
   type: DQN
   max_action: 0.261799,1500
@@ -24,13 +25,18 @@ learning_agent:
   epsilon_end: 0.2
   epsilon_decay: 1500
   update_target: 10
-  n_batches: 100
+  n_batches: 10
   batch_size: 2048
   loss: huber
-  memory_split: 0.6
   tau: 0.05
+replay_data:
+  capacity: 1000
+  replay_strategy: proximity
+  proximity_threshold: 10.0
+  close_fraction: 0.3
+  far_fraction: 0.7
 boat:
-  type: sail_boat
+  type: utility
   sensor: lidar
   mode: propeller_and_power
 reward:

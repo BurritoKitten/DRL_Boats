@@ -551,10 +551,12 @@ class DQN:
         self.h_params = h_params
         self.optimizer = None
         self.set_optimizer(h_params)
-        self.transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward', 'done'))
+        self.replay_storage = ReplayStorage(self.h_params)
+        self.transition = self.replay_storage.transition
         #self.optimizer = optim.Adam(self.policy_net.parameters(), lr=h_params['learn_rate'],betas=(h_params['beta_1'], h_params['beta_2']))
-        self.memory_far = ReplayMemory(self.h_params['learning_agent']['memory_capacity'], self.transition)
-        self.memory_close = ReplayMemory(self.h_params['learning_agent']['memory_capacity'], self.transition)
+
+        #self.memory_far = ReplayMemory(self.h_params['learning_agent']['memory_capacity'], self.transition)
+        #self.memory_close = ReplayMemory(self.h_params['learning_agent']['memory_capacity'], self.transition)
         self.device = device # choose cpu or gpu
 
     def train_agent(self):
@@ -567,20 +569,15 @@ class DQN:
         c = 0
         while c < self.h_params['learning_agent']['n_batches']:
 
-            if self.memory_close is not None:
-                if len(self.memory_far) <= self.h_params['learning_agent']['batch_size'] or len(self.memory_close) <= self.h_params['learning_agent']['batch_size']:
-                    return
-            else:
-                if len(self.memory_far) <= self.h_params['learning_agent']['batch_size']:
-                    return
+            transitions = self.replay_storage.sample(self.h_params['learning_agent']['batch_size'])
+            if transitions is None:
+                return
 
             #far_sample_size = int(self.h_params['learning_agent']['batch_size'] #*self.h_params['learning_agent']['memory_split'])
-            far_sample_size = self.h_params['learning_agent']['batch_size']
-            transitions_far = self.memory_far.sample(far_sample_size)
             # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
             # detailed explanation). This converts batch-array of Transitions
             # to Transition of batch-arrays.
-            batch_far = self.transition(*zip(*transitions_far))
+            batch = self.transition(*zip(*transitions))
 
             # Compute a mask of non-final states and concatenate the batch elements
             # (a final state would've been the one after which simulation ended)
@@ -588,48 +585,22 @@ class DQN:
             # non_final_mask_gps = torch.tensor(tuple(map(lambda s: s is not None,batch.next_gps)), device=self.device, dtype=torch.bool)
             # non_final_next_gps = torch.cat([s for s in batch.next_gpsif s is not None])
 
-            non_final_mask_far = torch.tensor(tuple(map(lambda s: s is not None,
-                                                    batch_far.next_state)), device=self.device, dtype=torch.bool)
-            non_final_next_states_far = torch.cat([s for s in batch_far.next_state
+            non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                                    batch.next_state)), device=self.device, dtype=torch.bool)
+            non_final_next_states = torch.cat([s for s in batch.next_state
                                                if s is not None])
-            # gps_batch = torch.cat(batch.gps)
-            state_batch_far = torch.cat(batch_far.state)
-            action_batch_far = torch.cat(batch_far.action)
-            reward_batch_far = torch.cat(batch_far.reward)
 
-            #transitions_close = self.memory_close.sample(self.h_params['learning_agent']['batch_size'] -far_sample_size)
-            # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
-            # detailed explanation). This converts batch-array of Transitions
-            # to Transition of batch-arrays.
-            #batch_close = self.transition(*zip(*transitions_close))
-
-            # Compute a mask of non-final states and concatenate the batch elements
-            # (a final state would've been the one after which simulation ended)
-
-            # non_final_mask_gps = torch.tensor(tuple(map(lambda s: s is not None,batch.next_gps)), device=self.device, dtype=torch.bool)
-            # non_final_next_gps = torch.cat([s for s in batch.next_gpsif s is not None])
-
-            #non_final_mask_close = torch.tensor(tuple(map(lambda s: s is not None,batch_close.next_state)), device=self.device, dtype=torch.bool)
-            #non_final_next_states_close = torch.cat([s for s in batch_close.next_stateif s is not None])
-            # gps_batch = torch.cat(batch.gps)
-            #state_batch_close = torch.cat(batch_close.state)
-            #action_batch_close = torch.cat(batch_close.action)
-            #reward_batch_close = torch.cat(batch_close.reward)
+            state_batch = torch.cat(batch.state)
+            action_batch = torch.cat(batch.action)
+            reward_batch = torch.cat(batch.reward)
 
             # concatenate the far and close parts
-            '''
-            state_batch = torch.concat((state_batch_far,state_batch_close))
-            action_batch = torch.concat((action_batch_far, action_batch_close))
-            reward_batch = torch.concat((reward_batch_far, reward_batch_close))
-            non_final_mask = torch.concat((non_final_mask_far,non_final_mask_close))
-            non_final_next_states = torch.concat((non_final_next_states_far, non_final_next_states_close))
-            '''
 
             # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
             # columns of actions taken. These are the actions which would've been taken
             # for each batch state according to policy_net
             # state_action_values = self.policy_net([gps_batch,state_batch]).gather(1, action_batch.type(torch.int64))
-            state_action_values = self.policy_network(state_batch_far).gather(1, action_batch_far.type(torch.int64))
+            state_action_values = self.policy_network(state_batch).gather(1, action_batch.type(torch.int64))
 
             # Compute V(s_{t+1}) for all next states.
             # Expected values of actions for non_final_next_states are computed based
@@ -637,13 +608,11 @@ class DQN:
             # This is merged based on the mask, such that we'll have either the expected
             # state value or 0 in case the state was final.
             next_state_values = torch.zeros(self.h_params['learning_agent']['batch_size'], device=self.device)
-            next_state_values[non_final_mask_far] = self.target_network(non_final_next_states_far).max(1)[0].detach()
+            next_state_values[non_final_mask] = self.target_network(non_final_next_states).max(1)[0].detach()
+
             # Compute the expected Q values
             #expected_state_action_values = (next_state_values * self.h_params['learning_agent']['gamma']) + reward_batch
-            #tmp = torch.mul(torch.reshape(next_state_values,(len(next_state_values),1)) , self.h_params['learning_agent']['gamma'])
-            #check = torch.reshape(next_state_values,(len(next_state_values),1))
-            #tmp_2 = torch.add(tmp, check)
-            expected_state_action_values = torch.add(torch.mul(torch.reshape(next_state_values,(len(next_state_values),1))  , self.h_params['learning_agent']['gamma']) , reward_batch_far)
+            expected_state_action_values = torch.add(torch.mul(torch.reshape(next_state_values,(len(next_state_values),1))  , self.h_params['learning_agent']['gamma']) , reward_batch)
 
             # Compute Huber loss
             if self.h_params['learning_agent']['loss'] == 'huber':
